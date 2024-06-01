@@ -1,0 +1,39 @@
+menu "PCF8575 configuration"
+
+    config PCF8575_PIN_NUM_SCL
+        int "SCL GPIO Number"
+        default 15 if IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+        help
+            GPIO number for I2C Master clock line.
+
+    config PCF8575_PIN_NUM_SDA
+        int "SDA GPIO Number"
+        default 4 if IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+        help
+            GPIO number for I2C Master data line.
+
+    config PCF8575_PIN_NUM_INTERRUPT
+        int "SDA GPIO Number"
+        default 34 if IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+        help
+            GPIO number for I2C Master data line.
+
+    config PCF8575_I2C_PORT
+        int "I2C Port"
+        default 0
+        help 
+            I2C port for PCF8575 module.
+
+    config PCF8575_I2C_ADDRESS
+        hex "PCF8575 I2C ADDRESS"
+        default 0x27
+        help 
+            I2C address for PCF8575 module.
+
+    config PCF8575_I2C_FREQ_HZ
+        int "Frequency I2C"
+        default 400000
+        help
+            I2C frequency.
+
+endmenu

@@ -1,0 +1,243 @@
+menu "Device in use" 
+
+    config NAME_DEVICE
+        string "Name Device"
+        default "Electronic Nose"
+        help
+            Name device.
+
+    config USING_WIFI
+        bool "Using WIFI station"
+        default y
+        help 
+            Using connect WIFI.
+
+    config USING_SDCARD
+        bool "Using SD card"
+        default y
+        help 
+            Using SD card for store data.
+
+    config USING_RTC
+        bool "Using RTC module(DS3231)"
+        default y
+        help 
+            Using DS3231 module.
+
+    config RTC_TIME_SYNC
+        bool "Time synchronization for RTC"
+        default y
+        help 
+            Time synchronization for RTC
+
+endmenu
+
+menu "WiFi Config Menu"
+
+    config SSID
+        string  "SSID"
+        default "ENOSE"
+        help
+            SSID.
+
+    config PASSWORD
+        string  "PASSWORD"
+        default  "12345678"
+        help 
+            PASSWORD.
+
+    config MAXIMUM_AP
+        int "Maximum access points"
+        default  10
+        help 
+            Maximum access points.
+
+    config MAXIMUM_RETRY
+        int "Maximum retry"
+        default 25
+        help
+            Set the Maximum retry to avoid station reconnecting to the AP unlimited when the AP is really inexistent.
+
+    # config SHOW_LIST_ACCESS_POINTS_FOUND
+    #     bool "Show list Access Points found."
+    #     default y
+    #     help
+    #         Show list Access Points found.
+
+    config POWER_SAVE_MODE_ENABLE
+        bool "Enable Power save mode"
+        default y
+        help
+            Enable Wifi power save mode.
+
+        config WIFI_LISTEN_INTERVAL
+        int "WiFi listen interval"
+        default 5
+        help
+            Interval for station to listen to beacon from AP. The unit of listen interval is one beacon interval.
+            For example, if beacon interval is 100 ms and listen interval is 5, the interval for station to listen
+            to beacon is 500 ms.
+
+    config WIFI_BEACON_TIMEOUT
+        int "WiFi beacon timeout"
+        default 2
+        range 2 60
+        help
+            For Station, If the station does not receive a beacon frame from the connected SoftAP during the
+            inactive time, disconnect from SoftAP. Default 3s.
+
+    choice POWER_SAVE_MODE
+        prompt "power save mode"
+        default POWER_SAVE_MIN_MODEM
+        help
+            Power save mode for the esp32 to use. Modem sleep mode includes minimum and maximum power save modes.
+            In minimum power save mode, station wakes up every DTIM to receive beacon. Broadcast data will not be
+            lost because it is transmitted after DTIM. However, it can not save much more power if DTIM is short
+            for DTIM is determined by AP.
+            In maximum power save mode, station wakes up every listen interval to receive beacon. Broadcast data
+            may be lost because station may be in sleep state at DTIM time. If listen interval is longer, more power
+            is saved but broadcast data is more easy to lose.
+
+        config POWER_SAVE_NONE
+            bool "none"
+        config POWER_SAVE_MIN_MODEM
+            bool "minimum modem"
+        config POWER_SAVE_MAX_MODEM
+            bool "maximum modem"
+    endchoice
+
+    choice MAX_CPU_FREQ
+        prompt "Maximum CPU frequency"
+        default MAX_CPU_FREQ_80
+        depends on PM_ENABLE
+        help
+            Maximum CPU frequency to use for dynamic frequency scaling.
+
+        config MAX_CPU_FREQ_80
+            bool "80 MHz"
+        config MAX_CPU_FREQ_120
+            bool "120 MHz"
+            depends on IDF_TARGET_ESP32C2
+        config MAX_CPU_FREQ_160
+            bool "160 MHz"
+            depends on !IDF_TARGET_ESP32C2
+        config MAX_CPU_FREQ_240
+            bool "240 MHz"
+            depends on IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+    endchoice
+
+    config MAX_CPU_FREQ_MHZ
+        int
+        default 80 if MAX_CPU_FREQ_80
+        default 120 if MAX_CPU_FREQ_120
+        default 160 if MAX_CPU_FREQ_160
+        default 240 if MAX_CPU_FREQ_240
+
+    choice MIN_CPU_FREQ
+        prompt "Minimum CPU frequency"
+        default MIN_CPU_FREQ_10M
+        depends on PM_ENABLE
+        help
+            Minimum CPU frequency to use for dynamic frequency scaling.
+            Should be set to XTAL frequency or XTAL frequency divided by integer.
+
+        config MIN_CPU_FREQ_40M
+            bool "40 MHz (use with 40MHz XTAL)"
+            depends on XTAL_FREQ_40 || XTAL_FREQ_AUTO
+        config MIN_CPU_FREQ_20M
+            bool "20 MHz (use with 40MHz XTAL)"
+            depends on XTAL_FREQ_40 || XTAL_FREQ_AUTO
+        config MIN_CPU_FREQ_10M
+            bool "10 MHz (use with 40MHz XTAL)"
+            depends on XTAL_FREQ_40 || XTAL_FREQ_AUTO
+        config MIN_CPU_FREQ_26M
+            bool "26 MHz (use with 26MHz XTAL)"
+            depends on XTAL_FREQ_26 || XTAL_FREQ_AUTO
+        config MIN_CPU_FREQ_13M
+            bool "13 MHz (use with 26MHz XTAL)"
+            depends on XTAL_FREQ_26 || XTAL_FREQ_AUTO
+    endchoice
+
+    config MIN_CPU_FREQ_MHZ
+        int
+        default 40 if MIN_CPU_FREQ_40M
+        default 20 if MIN_CPU_FREQ_20M
+        default 10 if MIN_CPU_FREQ_10M
+        default 26 if MIN_CPU_FREQ_26M
+        default 13 if MIN_CPU_FREQ_13M
+
+endmenu
+
+menu "MQTT Config menu"
+
+    config BROKER_URI
+        string "Broker URL"
+        default "mqtt://103.130.212.210:1885"
+        help
+            URL of an mqtt broker which this device connects to.
+
+    config BROKER_HOST
+        string "Broker host"
+        default "103.130.212.210"
+        help 
+            Host is MQTT server domain <ipv4 as string>
+
+    config BROKER_PORT
+        int "Broker port"
+        default 1885
+        help 
+            Port is MQTT server port
+
+    config MQTT_USERNAME
+        string "User name"
+        default "test"
+        help 
+            MQTT username
+
+    config MQTT_PASSWORD
+        string  "Password"
+        default  "testadmin"
+        help 
+            MQTT password
+
+    config MQTT_TOPIC
+        string "MQTT topic"
+        default "ENose"
+        help
+            Topic to subcrice
+
+    config MQTT_CLIENT_ID
+        string "Client ID"
+        default "ENoseClient"
+        help
+            Set MQTT client identifier.
+
+    config MQTT_TIMEOUT
+        int "MQTT Timeout in ms"
+        default 10000
+        help
+            Abort network operation if it is not completed after this value, in milliseconds.
+
+    config MQTT_DISABLE_AUTO_RECONNECT
+        bool "Disable auto reconnect to server"
+        default n
+        help
+            Client will reconnect to server (when errors/disconnect).
+
+    # config BROKER_CERTIFICATE_OVERRIDE
+    #     string "Broker certificate override"
+    #     default ""
+    #     help
+    #         Please leave empty if broker certificate included from a textfile; otherwise fill in a base64 part of PEM
+    #         format certificate
+
+    config BROKER_CERTIFICATE_OVERRIDDEN
+        bool
+        default y if BROKER_CERTIFICATE_OVERRIDE != ""
+
+    # config BROKER_BIN_SIZE_TO_SEND
+    #     int
+    #     default 20000
+
+endmenu
+

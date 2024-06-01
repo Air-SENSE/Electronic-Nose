@@ -1,0 +1,32 @@
+menu "ADS111x Configuration"
+
+    config ADS111X_DEVICE_COUNT
+        int "Number of ADS111x"
+        default 2
+        help
+            Number of ADS111x devices on the bus.
+
+    config ADS111X_I2C_MASTER_SCL
+        int "SCL GPIO Number"
+        default 22 if IDF_TARGET_ESP32
+        help
+            GPIO number for I2C Master clock line.
+
+    config ADS111X_I2C_MASTER_SDA
+        int "SDA GPIO Number"
+        default 21 if IDF_TARGET_ESP32
+        help
+            GPIO number for I2C Master data line.
+
+    config ADS111X_I2C_PORT
+        int "I2C Port"
+        default 1
+        help 
+            I2C port for PCF8574 module.
+
+    config ADS111X_I2C_FREQ_HZ
+        int "Frequency I2C"
+        default 400000
+        help
+            I2C frequency.
+endmenu

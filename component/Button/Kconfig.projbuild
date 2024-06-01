@@ -1,0 +1,15 @@
+menu "Button configuration"
+
+    config BUTTON_GPIO_PIN_1
+        int "Button1 GPIO Number"
+        default 36 if IDF_TARGET_ESP32
+        help
+            GPIO number for button 1.
+
+    config BUTTON_GPIO_PIN_2
+        int "Button2 GPIO Number"
+        default 39 if IDF_TARGET_ESP32
+        help
+            GPIO number for button 2.
+
+endmenu
