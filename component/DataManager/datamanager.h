@@ -20,6 +20,6 @@ struct dataSensor_st
     int16_t ADC_Value[8];
 };
 
-const char dataSensor_templateSaveToSDCard[] = "%" PRIi64 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 "";
+const char dataSensor_templateSaveToSDCard[] = "%" PRIi64 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 "\n";
 
 #endif

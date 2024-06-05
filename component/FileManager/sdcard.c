@@ -50,7 +50,7 @@ esp_err_t sdcard_initialize(esp_vfs_fat_sdmmc_mount_config_t *_mount_config, sdm
 esp_err_t sdcard_writeStringToFile(const char *nameFile, const char *dataString)
 {
     char pathFile[64];
-    sprintf(pathFile, "%s/%s.csv", mount_point, nameFile);
+    sprintf(pathFile, "%s/%s.txt", mount_point, nameFile);
 
     ESP_LOGI(__func__, "Opening file %s...", pathFile);
     FILE *file = fopen(pathFile, "a+");
@@ -74,7 +74,7 @@ esp_err_t sdcard_writeStringToFile(const char *nameFile, const char *dataString)
 esp_err_t sdcard_writeDataToFile(const char *nameFile, const char *format, ...)
 {
     char pathFile[64];
-    sprintf(pathFile, "%s/%s.csv", mount_point, nameFile);
+    sprintf(pathFile, "%s/%s.txt", mount_point, nameFile);
 
     ESP_LOGI(__func__, "Opening file %s...", pathFile);
     FILE *file = fopen(pathFile, "a+");
@@ -123,7 +123,7 @@ esp_err_t sdcard_writeDataToFile(const char *nameFile, const char *format, ...)
 esp_err_t sdcard_readDataFromFile(const char *nameFile, const char *format, ...)
 {
     char pathFile[64];
-    sprintf(pathFile, "%s/%s.csv", mount_point, nameFile);
+    sprintf(pathFile, "%s/%s.txt", mount_point, nameFile);
 
     ESP_LOGI(__func__, "Opening file %s...", pathFile);
     FILE *file = fopen(pathFile, "r");
@@ -166,8 +166,8 @@ esp_err_t sdcard_renameFile(const char *oldNameFile, char *newNameFile)
     struct stat st;
     char _oldNameFile[64];
     char _newNameFile[64];
-    sprintf(_oldNameFile, "%s/%s.csv", MOUNT_POINT, oldNameFile);
-    sprintf(_newNameFile, "%s/%s.csv", MOUNT_POINT, newNameFile);
+    sprintf(_oldNameFile, "%s/%s.txt", MOUNT_POINT, oldNameFile);
+    sprintf(_newNameFile, "%s/%s.txt", MOUNT_POINT, newNameFile);
     ESP_LOGI(__func__, "Update file name from %s to %s", _oldNameFile, _newNameFile);
 
     if (stat(_newNameFile, &st) == 0) {
@@ -191,7 +191,7 @@ esp_err_t sdcard_removeFile(const char *nameFile)
 {
     struct stat st;
     char _nameFile[64];
-    sprintf(_nameFile, "%s/%s.csv", MOUNT_POINT, nameFile);
+    sprintf(_nameFile, "%s/%s.txt", MOUNT_POINT, nameFile);
     
     // Check whether destination file exists or not
     if (stat(_nameFile, &st) != 0) {

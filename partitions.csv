@@ -4,4 +4,4 @@ nvs                                               ,data                         
 phy_init                                          ,data                                             ,phy      ,0x00d000 ,0x1000 ,
 otadata                                           ,data                                             ,ota      ,0x00e000 ,0x2000 ,
 factory                                           ,app                                              ,factory  ,0x100000 ,1512K  ,
-ota_0                                             ,app                                              ,ota_0    ,0x280000 ,1512K  ,
+data                                              ,data                                             ,spiffs   ,0x280000 ,1512K  ,

@@ -50,6 +50,7 @@
 #include "driver/uart.h"
 #include "driver/i2c.h"
 #include "driver/spi_common.h"
+#include "esp_spiffs.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -69,6 +70,7 @@
 #include "pcf8574.h"
 #include "pcf8575.h"
 #include "button.h"
+#include "FileServer.h"
 
 /*------------------------------------ DEFINE ------------------------------------ */
 
@@ -186,6 +188,8 @@ static void WiFi_eventHandler( void *argument,  esp_event_base_t event_base, int
         {
             ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
             ESP_LOGI(TAG, "Got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+
+            start_file_server(MOUNT_POINT);
 
 #ifdef CONFIG_RTC_TIME_SYNC
         if (sntp_syncTimeTask_handle == NULL)
@@ -341,7 +345,7 @@ static void sntp_syncTime_task(void *parameter)
             time_t timeNow = 0;
             time(&timeNow);
             localtime_r(&timeNow, &timeInfo);
-            ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_setTime(&ds3231_device, &timeInfo));
+            // ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_setTime(&ds3231_device, &timeInfo));
             sntp_printServerInformation();
         }
         sntp_deinit();
@@ -385,13 +389,13 @@ void getDataFromSensor_task(void *parameters)
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_init_desc(&ads111x_devices[i], addresses[i], CONFIG_ADS111X_I2C_PORT, CONFIG_ADS111X_I2C_MASTER_SDA, CONFIG_ADS111X_I2C_MASTER_SCL));
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_mode(&ads111x_devices[i], ADS111X_MODE_CONTINUOUS));    // Continuous conversion mode
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_data_rate(&ads111x_devices[i], ADS111X_DATA_RATE_128)); // 64 samples per second
-        ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_gain(&ads111x_devices[i], ads111x_gain_values[ADS111X_GAIN_4V096]));
-        ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[n], (ads111x_mux_t)(i)));
+        ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_gain(&ads111x_devices[i], ads111x_gain_values[ADS111X_GAIN_2V048]));
+        ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[i], (ads111x_mux_t)(i)));
     }
     // Setup for PCF8575
 
     vTaskDelay(10000 / portTICK_PERIOD_MS);
-    ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_17, 0));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_07, 0));
     // End setup for PCF8575
 
     // Setup button
@@ -414,7 +418,9 @@ void getDataFromSensor_task(void *parameters)
         xTaskNotifyWait(0x00, ULONG_MAX, NULL, portMAX_DELAY);
         ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_17, 1));
         vTaskDelay(5000 / portTICK_PERIOD_MS);
-        xEventGroupSetBits(fileStore_eventGroup, FILE_RENAME_NEWFILE);
+        // xEventGroupSetBits(fileStore_eventGroup, FILE_RENAME_NEWFILE);
+        ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_initialize(&ds3231_device, CONFIG_RTC_I2C_PORT, CONFIG_RTC_PIN_NUM_SDA, CONFIG_RTC_PIN_NUM_SCL));
+        ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_convertTimeToString(&ds3231_device, nameFileSaveData, 14));
         finishTime = xTaskGetTickCount() + SAMPLING_TIMME;
 
         do
@@ -425,7 +431,7 @@ void getDataFromSensor_task(void *parameters)
             {
                 dataSensorTemp.timeStamp = dataSensorTemp.timeStamp + (uint64_t)((PERIOD_GET_DATA_FROM_SENSOR * portTICK_PERIOD_MS) / 1000);
 
-#if 0
+#if 1
 /**
  * @brief Solution 1: Reading data form 4 ADC channels of ADS1115(0) and then, reading 4 chanel ADC of ADS1115(1). 
  * 
@@ -439,8 +445,9 @@ void getDataFromSensor_task(void *parameters)
                         int16_t ADC_rawData = 0;
                         if (ads111x_get_value(&ads111x_devices[n], &ADC_rawData) == ESP_OK)
                         {
-                            float voltage = ads111x_gain_values[ADS111X_GAIN_4V096] / ADS111X_MAX_VALUE * ADC_rawData;
+                            float voltage = ads111x_gain_values[ADS111X_GAIN_2V048] / ADS111X_MAX_VALUE * ADC_rawData;
                             ESP_LOGI(__func__, "Raw ADC value: %d, Voltage: %.04f Volts.", ADC_rawData, voltage);
+                            printf("%.04f,", voltage);
                             dataSensorTemp.ADC_Value[n * 4 + i] = ADC_rawData;
                         }
                         else{
@@ -448,6 +455,8 @@ void getDataFromSensor_task(void *parameters)
                         }
                     }
                 }
+                printf("\n");
+
 #else
 /**
  * @brief Solution 2: Interleaved reading of chanels of 2 ads1115 modules.
@@ -459,15 +468,19 @@ void getDataFromSensor_task(void *parameters)
                     if (ads111x_get_value(&ads111x_devices[i % 2], &ADC_rawData) == ESP_OK)
                     {
                         dataSensorTemp.ADC_Value[i] = ADC_rawData;
-                        float voltage = ads111x_gain_values[ADS111X_GAIN_4V096] / ADS111X_MAX_VALUE * ADC_rawData;
+                        float voltage = ads111x_gain_values[ADS111X_GAIN_2V048] / ADS111X_MAX_VALUE * ADC_rawData;
                         ESP_LOGI(__func__, "Raw ADC value: %d, Voltage: %.04f Volts.", ADC_rawData, voltage);
                     }
                     else
                     {
-                        ESP_LOGE(__func__, "[%u] Cannot read ADC value.", n);
+                        ESP_LOGE(__func__, "[%u] Cannot read ADC value.", i);
                     }
-                    ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[i % 2], (ads111x_mux_t)(i / 2)));
+                    ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[i % 2], (ads111x_mux_t)((i + 1) / 2)));
                 }
+
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[0], (ads111x_mux_t)(0)));
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[1], (ads111x_mux_t)(0)));
+
 #endif
 
                 xSemaphoreGive(getDataSensor_semaphore); // Give mutex
@@ -503,8 +516,6 @@ void fileEvent_task(void *parameters)
     fileStore_eventGroup = xEventGroupCreate();
     SemaphoreHandle_t file_semaphore = xSemaphoreCreateMutex();
 
-    ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_initialize(&ds3231_device, CONFIG_RTC_I2C_PORT, CONFIG_RTC_PIN_NUM_SDA, CONFIG_RTC_PIN_NUM_SCL));
-
     for (;;)
     {
         EventBits_t bits = xEventGroupWaitBits(fileStore_eventGroup,
@@ -522,6 +533,7 @@ void fileEvent_task(void *parameters)
 
             if (bits & FILE_RENAME_NEWFILE)
             {
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_initialize(&ds3231_device, CONFIG_RTC_I2C_PORT, CONFIG_RTC_PIN_NUM_SDA, CONFIG_RTC_PIN_NUM_SCL));
                 ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_convertTimeToString(&ds3231_device, nameFileSaveData, 14));
             }
             xSemaphoreGive(file_semaphore);
@@ -549,10 +561,11 @@ void saveDataSensorToSDcard_task(void *parameters)
             {
                 ESP_LOGI(__func__, "Receiving data from queue successfully.");
 
-                if (xSemaphoreTake(SDcard_semaphore, portMAX_DELAY) == pdTRUE)
-                {
+                // if (xSemaphoreTake(SDcard_semaphore, portMAX_DELAY) == pdTRUE)
+                // {
                     static esp_err_t errorCode_t;
                     // Create data string follow format
+
                     errorCode_t = sdcard_writeDataToFile(nameFileSaveData, dataSensor_templateSaveToSDCard,
                                                         dataSensorReceiveFromQueue.timeStamp,
                                                         dataSensorReceiveFromQueue.ADC_Value[0],
@@ -564,12 +577,12 @@ void saveDataSensorToSDcard_task(void *parameters)
                                                         dataSensorReceiveFromQueue.ADC_Value[6],
                                                         dataSensorReceiveFromQueue.ADC_Value[7]);
                     ESP_LOGI(TAG, "Save task received mutex!");
-                    xSemaphoreGive(SDcard_semaphore);
+                    // xSemaphoreGive(SDcard_semaphore);
                     if (errorCode_t != ESP_OK)
                     {
                         ESP_LOGE(__func__, "sdcard_writeDataToFile(...) function returned error: 0x%.4X", errorCode_t);
                     }
-                }
+                // }
             }
             else
             {
@@ -618,8 +631,43 @@ static void initialize_nvs(void)
     ESP_ERROR_CHECK_WITHOUT_ABORT(error);
 }
 
+esp_err_t mount_storage(const char* base_path)
+{
+    ESP_LOGI(TAG, "Initializing SPIFFS");
+
+    esp_vfs_spiffs_conf_t conf = {
+        .base_path = base_path,
+        .partition_label = NULL,
+        .max_files = 5,   // This sets the maximum number of files that can be open at the same time
+        .format_if_mount_failed = true
+    };
+
+    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+    if (ret != ESP_OK) {
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+        }
+        return ret;
+    }
+
+    size_t total = 0, used = 0;
+    ret = esp_spiffs_info(NULL, &total, &used);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+    return ESP_OK;
+}
+
 void app_main(void)
 {
+    // esp_log_level_set("*", ESP_LOG_NONE);
     // Allow other core to finish initialization
     vTaskDelay(pdMS_TO_TICKS(200));
     ESP_LOGI(__func__, "Starting app main.");
@@ -656,24 +704,26 @@ void app_main(void)
     vTaskDelay(500 / portTICK_PERIOD_MS);
 
 // Initialize SD card
-#if (CONFIG_USING_SDCARD)
+// #if (CONFIG_USING_SDCARD)
     // Initialize SPI Bus
 
-    ESP_LOGI(__func__, "Initialize SD card with SPI interface.");
-    esp_vfs_fat_mount_config_t mount_config_t = MOUNT_CONFIG_DEFAULT();
-    spi_bus_config_t spi_bus_config_t = SPI_BUS_CONFIG_DEFAULT();
-    sdmmc_host_t host_t = SDSPI_HOST_DEFAULT();
-    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = CONFIG_PIN_NUM_CS;
-    slot_config.host_id = host_t.slot;
+    // ESP_LOGI(__func__, "Initialize SD card with SPI interface.");
+    // esp_vfs_fat_mount_config_t mount_config_t = MOUNT_CONFIG_DEFAULT();
+    // spi_bus_config_t spi_bus_config_t = SPI_BUS_CONFIG_DEFAULT();
+    // sdmmc_host_t host_t = SDSPI_HOST_DEFAULT();
+    // sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    // slot_config.gpio_cs = CONFIG_PIN_NUM_CS;
+    // slot_config.host_id = host_t.slot;
 
-    sdmmc_card_t SDCARD;
-    ESP_ERROR_CHECK_WITHOUT_ABORT(sdcard_initialize(&mount_config_t, &SDCARD, &host_t, &spi_bus_config_t, &slot_config));
-    SDcard_semaphore = xSemaphoreCreateMutex();
+    // sdmmc_card_t SDCARD;
+    // ESP_ERROR_CHECK_WITHOUT_ABORT(sdcard_initialize(&mount_config_t, &SDCARD, &host_t, &spi_bus_config_t, &slot_config));
+    // SDcard_semaphore = xSemaphoreCreateMutex();
 
-    xTaskCreate(fileEvent_task, "EventFile", (1024 * 8), NULL, (UBaseType_t)20, NULL);
+    // xTaskCreate(fileEvent_task, "EventFile", (1024 * 8), NULL, (UBaseType_t)20, NULL);
 
-#endif // CONFIG_USING_SDCARD
+    mount_storage(MOUNT_POINT);
+
+// #endif // CONFIG_USING_SDCARD
 
     ESP_ERROR_CHECK_WITHOUT_ABORT(i2cdev_init());
 
@@ -690,7 +740,7 @@ void app_main(void)
 
     // Create task to get data from sensor (32Kb stack memory| priority 25(max))
     // Period 5000ms
-    xTaskCreate(getDataFromSensor_task, "GetDataSensor", (1024 * 32), NULL, (UBaseType_t)25, &getDataFromSensorTask_handle);
+    xTaskCreate(getDataFromSensor_task, "GetDataSensor", (1024 * 32), NULL, (UBaseType_t)15, &getDataFromSensorTask_handle);
 
     // Create task to save data from sensor read by getDataFromSensor_task() to SD card (16Kb stack memory| priority 10)
     // Period 5000ms
