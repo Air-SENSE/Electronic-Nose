@@ -7,7 +7,8 @@
 __attribute__((unused)) static const char *timeFormat2 = "%d %d %d";
 
 // %d-%d-%d
-static const char *timeFormat3 = "%.4d%.2d%.2d%.2d%.2d%.2d";
+// static const char *timeFormat3 = "%.4d%.2d%.2d%.2d%.2d%.2d";
+static const char *timeFormat3 = "%.2d%.2d%.2d%.2d";
 static const int month[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
 
 int currentDay;
@@ -37,7 +38,7 @@ esp_err_t ds3231_convertTimeToString(i2c_dev_t *dev, char* timeString, const uns
 #endif
     memset(timeString, 0, lenghtString);
     int lenght = 0;
-    lenght = sprintf(timeString, timeFormat3, time.tm_year, time.tm_mon, time.tm_mday, time.tm_hour, time.tm_min, time.tm_sec);
+    lenght = sprintf(timeString, timeFormat3, time.tm_mon, time.tm_mday, time.tm_hour, time.tm_min);
     if (lenght)
     {
         ESP_LOGI(__func__, "Convert time to string success.");

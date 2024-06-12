@@ -45,7 +45,7 @@
                                     .allocation_unit_size = (1024 * 1024),  \
 }
 
-#define MOUNT_POINT "/data"
+#define MOUNT_POINT "/sdcard"
 static const char mount_point[] = MOUNT_POINT;
 
 

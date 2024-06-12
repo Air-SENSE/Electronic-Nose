@@ -12,14 +12,12 @@
 struct dataSensor_st
 {
     int64_t timeStamp;
-#ifdef CONFIG_USING_SHT_SENSOR
     float temperature;
     float humidity;
     float pressure;
-#endif // CONFIG_USING_SHT_SENSOR
     int16_t ADC_Value[8];
 };
 
-const char dataSensor_templateSaveToSDCard[] = "%" PRIi64 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 "\n";
+const char dataSensor_templateSaveToSDCard[] = "%" PRIi64 ",%.2f,%.2f,%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 ",%" PRId32 "\n";
 
 #endif

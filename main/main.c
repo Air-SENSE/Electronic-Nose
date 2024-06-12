@@ -67,6 +67,7 @@
 #include "DeviceManager.h"
 #include "sntp_sync.h"
 #include "ADS111x.h"
+#include "sht3x.h"
 #include "pcf8574.h"
 #include "pcf8575.h"
 #include "button.h"
@@ -78,7 +79,7 @@ __attribute__((unused)) static const char *TAG = "Main";
 
 #define PERIOD_GET_DATA_FROM_SENSOR (TickType_t)(1000 / portTICK_PERIOD_MS)
 #define PERIOD_SAVE_DATA_SENSOR_TO_SDCARD (TickType_t)(50 / portTICK_PERIOD_MS)
-#define SAMPLING_TIMME  (TickType_t)(90000 / portTICK_PERIOD_MS)
+#define SAMPLING_TIMME  (TickType_t)(200000 / portTICK_PERIOD_MS)
 
 #define NO_WAIT (TickType_t)(0)
 #define WAIT_10_TICK (TickType_t)(10 / portTICK_PERIOD_MS)
@@ -91,6 +92,8 @@ __attribute__((unused)) static const char *TAG = "Main";
 #define WIFI_DISCONNECT_BIT BIT1
 
 #define FILE_RENAME_NEWFILE BIT2
+
+#define BUTTON_PRESSED_BIT BIT1
 
 TaskHandle_t getDataFromSensorTask_handle = NULL;
 TaskHandle_t saveDataSensorToSDcardTask_handle = NULL;
@@ -108,11 +111,14 @@ QueueHandle_t nameFileSaveDataNoWiFi_queue = NULL;
 QueueHandle_t dataSensorMidleware_queue = NULL;
 
 static EventGroupHandle_t fileStore_eventGroup;
+static EventGroupHandle_t button_event;
 static char nameFileSaveData[21] = {0};
+static const char base_path[] = MOUNT_POINT;
 
 /*------------------------------------ Define devices ------------------------------------ */
 static i2c_dev_t ds3231_device = {0};
 static i2c_dev_t ads111x_devices[CONFIG_ADS111X_DEVICE_COUNT] = {0};
+static sht3x_t sht30_sensor = {0};
 // static i2c_dev_t pcf8574_device = {0};
 static i2c_dev_t pcf8575_device = {0};
 
@@ -124,19 +130,6 @@ const uint8_t addresses[CONFIG_ADS111X_DEVICE_COUNT] = {
 
 /*------------------------------------ WIFI ------------------------------------ */
 
-#if CONFIG_POWER_SAVE_MIN_MODEM
-#define DEFAULT_PS_MODE WIFI_PS_MIN_MODEM
-#elif CONFIG_POWER_SAVE_MAX_MODEM
-#define DEFAULT_PS_MODE WIFI_PS_MAX_MODEM
-#elif CONFIG_POWER_SAVE_NONE
-#define DEFAULT_PS_MODE WIFI_PS_NONE
-#else
-#define DEFAULT_PS_MODE WIFI_PS_NONE
-#endif /*CONFIG_POWER_SAVE_MODEM*/
-
-#define DEFAULT_LISTEN_INTERVAL CONFIG_WIFI_LISTEN_INTERVAL
-#define DEFAULT_BEACON_TIMEOUT  CONFIG_WIFI_BEACON_TIMEOUT
-
 /**
  * @brief SmartConfig task
  * 
@@ -147,7 +140,8 @@ static void smartConfig_task(void * parameter)
     ESP_ERROR_CHECK( esp_smartconfig_set_type(SC_TYPE_ESPTOUCH) );
     smartconfig_start_config_t smartConfig_config = SMARTCONFIG_START_CONFIG_DEFAULT();
     ESP_ERROR_CHECK( esp_smartconfig_start(&smartConfig_config));
-    for(;;) {
+    for(;;)
+    {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         ESP_LOGI(TAG, "smartconfig over");
         esp_smartconfig_stop();
@@ -155,7 +149,7 @@ static void smartConfig_task(void * parameter)
     }
 }
 
-static void sntp_syncTime_task(void *parameter);
+// static void sntp_syncTime_task(void *parameter);
 static void WiFi_eventHandler( void *argument,  esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
     if (event_base == WIFI_EVENT)
@@ -189,17 +183,17 @@ static void WiFi_eventHandler( void *argument,  esp_event_base_t event_base, int
             ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
             ESP_LOGI(TAG, "Got ip:" IPSTR, IP2STR(&event->ip_info.ip));
 
-            start_file_server(MOUNT_POINT);
+            start_file_server(base_path);
 
-#ifdef CONFIG_RTC_TIME_SYNC
-        if (sntp_syncTimeTask_handle == NULL)
-        {
-            if (sntp_initialize(NULL) == ESP_OK)
-            {
-                xTaskCreate(sntp_syncTime_task, "SNTP Get Time", (1024 * 4), NULL, (UBaseType_t)15, &sntp_syncTimeTask_handle);
-            }
-        }
-#endif
+// #ifdef CONFIG_RTC_TIME_SYNC
+//         if (sntp_syncTimeTask_handle == NULL)
+//         {
+//             if (sntp_initialize(NULL) == ESP_OK)
+//             {
+//                 xTaskCreate(sntp_syncTime_task, "SNTP Get Time", (1024 * 4), NULL, (UBaseType_t)15, &sntp_syncTimeTask_handle);
+//             }
+//         }
+// #endif
         }
     } else if (event_base == SC_EVENT) {
         switch (event_id)
@@ -316,50 +310,49 @@ void WIFI_initSTA(void)
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_start());
 
-#ifdef CONFIG_POWER_SAVE_MODE_ENABLE
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_inactive_time(WIFI_IF_STA, DEFAULT_BEACON_TIMEOUT));
-    ESP_LOGI(__func__, "Enable Power Save Mode.");
-    esp_wifi_set_ps(DEFAULT_PS_MODE);
-#endif // CONFIG_POWER_SAVE_MODE_ENABLE
-
     ESP_LOGI(__func__, "WIFI initialize STA finished.");
 }
 
-/**
- * @brief SNTP Get time task : init sntp, then get time from ntp and save time to DS3231,
- *        finally delete itself (no loop task)
- * 
- * @param parameter
- */
-static void sntp_syncTime_task(void *parameter)
-{
-    do
-    {
-        esp_err_t errorReturn = sntp_syncTime();
-        ESP_ERROR_CHECK_WITHOUT_ABORT(errorReturn);
-        if (errorReturn == ESP_OK)
-        {
-            sntp_setTimmeZoneToVN();
-            // ds3231_getTimeString(&ds3231_device);
-            struct tm timeInfo = {0};
-            time_t timeNow = 0;
-            time(&timeNow);
-            localtime_r(&timeNow, &timeInfo);
-            // ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_setTime(&ds3231_device, &timeInfo));
-            sntp_printServerInformation();
-        }
-        sntp_deinit();
-        vTaskDelete(NULL);
-    } while (0);
-}
+// /**
+//  * @brief SNTP Get time task : init sntp, then get time from ntp and save time to DS3231,
+//  *        finally delete itself (no loop task)
+//  * 
+//  * @param parameter
+//  */
+// static void sntp_syncTime_task(void *parameter)
+// {
+//     do
+//     {
+//         esp_err_t errorReturn = sntp_syncTime();
+//         ESP_ERROR_CHECK_WITHOUT_ABORT(errorReturn);
+//         if (errorReturn == ESP_OK)
+//         {
+//             sntp_setTimmeZoneToVN();
+//             ds3231_getTimeString(&ds3231_device);
+//             struct tm timeInfo = {0};
+//             time_t timeNow = 0;
+//             time(&timeNow);
+//             localtime_r(&timeNow, &timeInfo);
+//             ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_setTime(&ds3231_device, &timeInfo));
+//             sntp_printServerInformation();
+//         }
+//         sntp_deinit();
+//         vTaskDelete(NULL);
+//     } while (0);
+// }
 
 /*------------------------------------ BUTTON ------------------------------------ */
 
-static void button_Handle(void *parameters)
+static IRAM_ATTR void button_Handle(void *parameters)
 {
     button_disable((button_config_st *)parameters);
-    BaseType_t high_task_wakeup = pdFALSE;
-    xTaskNotifyFromISR(getDataFromSensorTask_handle, ULONG_MAX, eNoAction, &high_task_wakeup);
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // xTaskNotifyFromISR(getDataFromSensorTask_handle, ULONG_MAX, eNoAction, &high_task_wakeup);
+    BaseType_t result = xEventGroupSetBitsFromISR(button_event, BUTTON_PRESSED_BIT, &xHigherPriorityTaskWoken);
+    if (result != pdFAIL)
+    {
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
 }
 
 /*------------------------------------ GET DATA FROM SENSOR ------------------------------------ */
@@ -372,15 +365,16 @@ void getDataFromSensor_task(void *parameters)
 
     getDataSensor_semaphore = xSemaphoreCreateMutex();
 
-    ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_init_desc(&pcf8575_device,
-                                                CONFIG_PCF8575_I2C_ADDRESS,
-                                                CONFIG_PCF8575_I2C_PORT,
-                                                CONFIG_PCF8575_PIN_NUM_SDA,
-                                                CONFIG_PCF8575_PIN_NUM_SCL,
-                                                (-1),
-                                                NULL));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_init_desc(&pcf8575_device, CONFIG_PCF8575_I2C_ADDRESS, CONFIG_PCF8575_I2C_PORT, CONFIG_PCF8575_PIN_NUM_SDA, CONFIG_PCF8575_PIN_NUM_SCL, (-1), NULL));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_17, 1));
 
-    ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_17, 0));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(sht3x_init_desc(&sht30_sensor, 0x44, 1, 21, 22));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(sht3x_init(&sht30_sensor));
+    // Start periodic measurements with 1 measurement per second.
+    ESP_ERROR_CHECK_WITHOUT_ABORT(sht3x_start_measurement(&sht30_sensor, SHT3X_PERIODIC_1MPS, SHT3X_HIGH));
+    // Wait until first measurement is ready (constant time of at least 30 ms
+    // or the duration returned from *sht3x_get_measurement_duration*).
+    vTaskDelay(sht3x_get_measurement_duration(SHT3X_HIGH));
 
     // End setup for ADS1115
     memset(ads111x_devices, 0, sizeof(ads111x_devices));
@@ -388,17 +382,18 @@ void getDataFromSensor_task(void *parameters)
     {
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_init_desc(&ads111x_devices[i], addresses[i], CONFIG_ADS111X_I2C_PORT, CONFIG_ADS111X_I2C_MASTER_SDA, CONFIG_ADS111X_I2C_MASTER_SCL));
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_mode(&ads111x_devices[i], ADS111X_MODE_CONTINUOUS));    // Continuous conversion mode
-        ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_data_rate(&ads111x_devices[i], ADS111X_DATA_RATE_128)); // 64 samples per second
+        ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_data_rate(&ads111x_devices[i], ADS111X_DATA_RATE_128)); // 128 samples per second
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_gain(&ads111x_devices[i], ads111x_gain_values[ADS111X_GAIN_2V048]));
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[i], (ads111x_mux_t)(i)));
     }
     // Setup for PCF8575
 
     vTaskDelay(10000 / portTICK_PERIOD_MS);
-    ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_07, 0));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_17, 0));
     // End setup for PCF8575
 
     // Setup button
+    button_event = xEventGroupCreate();
     button_config_st button_config = {
         .io_config = {
             .intr_type = GPIO_INTR_POSEDGE,
@@ -415,12 +410,18 @@ void getDataFromSensor_task(void *parameters)
 
     for (;;)
     {
-        xTaskNotifyWait(0x00, ULONG_MAX, NULL, portMAX_DELAY);
+        // xTaskNotifyWait(0x00, ULONG_MAX, NULL, portMAX_DELAY);
+        EventBits_t bits = xEventGroupWaitBits(button_event, BUTTON_PRESSED_BIT, pdTRUE, pdFALSE, portMAX_DELAY);
+        if (bits & BUTTON_PRESSED_BIT)
+        {
+            ESP_LOGI(__func__, "Button pressed.");
+            printf("Button pressed.\n");
+        }
+
         ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_17, 1));
         vTaskDelay(5000 / portTICK_PERIOD_MS);
-        // xEventGroupSetBits(fileStore_eventGroup, FILE_RENAME_NEWFILE);
-        ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_initialize(&ds3231_device, CONFIG_RTC_I2C_PORT, CONFIG_RTC_PIN_NUM_SDA, CONFIG_RTC_PIN_NUM_SCL));
         ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_convertTimeToString(&ds3231_device, nameFileSaveData, 14));
+        ESP_ERROR_CHECK_WITHOUT_ABORT(sdcard_writeDataToFile(nameFileSaveData, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",  "TimeStamp", "Temperature", "Humidity", "EtOH", "VOC1", "VOC2", "CH4", "H2S", "CO", "Odor", "NH3"));
         finishTime = xTaskGetTickCount() + SAMPLING_TIMME;
 
         do
@@ -429,7 +430,10 @@ void getDataFromSensor_task(void *parameters)
             dataSensorTemp.timeStamp = 0;
             if (xSemaphoreTake(getDataSensor_semaphore, portMAX_DELAY))
             {
-                dataSensorTemp.timeStamp = dataSensorTemp.timeStamp + (uint64_t)((PERIOD_GET_DATA_FROM_SENSOR * portTICK_PERIOD_MS) / 1000);
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_getEpochTime(&ds3231_device, &(dataSensorTemp.timeStamp)));
+
+                ESP_ERROR_CHECK_WITHOUT_ABORT(sht3x_measure(&sht30_sensor, &dataSensorTemp.temperature, &dataSensorTemp.humidity));
+                ESP_LOGI(__func__, "Temperature: %f, Humidity: %f", dataSensorTemp.temperature, dataSensorTemp.humidity);
 
 #if 1
 /**
@@ -441,22 +445,21 @@ void getDataFromSensor_task(void *parameters)
                     for (size_t n = 0; n < 2; n++)
                     {
                         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[n], (ads111x_mux_t)(i + 4)));
-                        vTaskDelay(100 / portTICK_PERIOD_MS);
+                        vTaskDelay(10 / portTICK_PERIOD_MS);
                         int16_t ADC_rawData = 0;
                         if (ads111x_get_value(&ads111x_devices[n], &ADC_rawData) == ESP_OK)
                         {
-                            float voltage = ads111x_gain_values[ADS111X_GAIN_2V048] / ADS111X_MAX_VALUE * ADC_rawData;
-                            ESP_LOGI(__func__, "Raw ADC value: %d, Voltage: %.04f Volts.", ADC_rawData, voltage);
-                            printf("%.04f,", voltage);
+                            // float voltage = ads111x_gain_values[ADS111X_GAIN_2V048] / ADS111X_MAX_VALUE * ADC_rawData;
+                            // ESP_LOGI(__func__, "Raw ADC value: %d, Voltage: %.04f Volts.", ADC_rawData, voltage);
                             dataSensorTemp.ADC_Value[n * 4 + i] = ADC_rawData;
+                            ESP_LOGI(__func__, "Raw ADC value: %d.", ADC_rawData,);
                         }
-                        else{
+                        else
+                        {
                             ESP_LOGE(__func__, "[%u] Cannot read ADC value.", n);
                         }
                     }
                 }
-                printf("\n");
-
 #else
 /**
  * @brief Solution 2: Interleaved reading of chanels of 2 ads1115 modules.
@@ -494,12 +497,13 @@ void getDataFromSensor_task(void *parameters)
                 {
                     ESP_LOGI(__func__, "Success to post the data sensor to dataSensorMidleware Queue.");
                 }
-            }
+            };
             memset(&dataSensorTemp, 0, sizeof(struct dataSensor_st));
             vTaskDelayUntil(&task_lastWakeTime, PERIOD_GET_DATA_FROM_SENSOR);
 
         } while (task_lastWakeTime < finishTime);
         ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_17, 0));
+        xEventGroupClearBits(button_event, BUTTON_PRESSED_BIT);
         button_enable(&button_config);
     }
 };
@@ -561,13 +565,15 @@ void saveDataSensorToSDcard_task(void *parameters)
             {
                 ESP_LOGI(__func__, "Receiving data from queue successfully.");
 
-                // if (xSemaphoreTake(SDcard_semaphore, portMAX_DELAY) == pdTRUE)
-                // {
+                if (xSemaphoreTake(SDcard_semaphore, portMAX_DELAY) == pdTRUE)
+                {
                     static esp_err_t errorCode_t;
                     // Create data string follow format
 
                     errorCode_t = sdcard_writeDataToFile(nameFileSaveData, dataSensor_templateSaveToSDCard,
                                                         dataSensorReceiveFromQueue.timeStamp,
+                                                        dataSensorReceiveFromQueue.temperature,
+                                                        dataSensorReceiveFromQueue.humidity,
                                                         dataSensorReceiveFromQueue.ADC_Value[0],
                                                         dataSensorReceiveFromQueue.ADC_Value[1],
                                                         dataSensorReceiveFromQueue.ADC_Value[2],
@@ -577,12 +583,12 @@ void saveDataSensorToSDcard_task(void *parameters)
                                                         dataSensorReceiveFromQueue.ADC_Value[6],
                                                         dataSensorReceiveFromQueue.ADC_Value[7]);
                     ESP_LOGI(TAG, "Save task received mutex!");
-                    // xSemaphoreGive(SDcard_semaphore);
+                    xSemaphoreGive(SDcard_semaphore);
                     if (errorCode_t != ESP_OK)
                     {
                         ESP_LOGE(__func__, "sdcard_writeDataToFile(...) function returned error: 0x%.4X", errorCode_t);
                     }
-                // }
+                }
             }
             else
             {
@@ -631,40 +637,6 @@ static void initialize_nvs(void)
     ESP_ERROR_CHECK_WITHOUT_ABORT(error);
 }
 
-esp_err_t mount_storage(const char* base_path)
-{
-    ESP_LOGI(TAG, "Initializing SPIFFS");
-
-    esp_vfs_spiffs_conf_t conf = {
-        .base_path = base_path,
-        .partition_label = NULL,
-        .max_files = 5,   // This sets the maximum number of files that can be open at the same time
-        .format_if_mount_failed = true
-    };
-
-    esp_err_t ret = esp_vfs_spiffs_register(&conf);
-    if (ret != ESP_OK) {
-        if (ret == ESP_FAIL) {
-            ESP_LOGE(TAG, "Failed to mount or format filesystem");
-        } else if (ret == ESP_ERR_NOT_FOUND) {
-            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
-        } else {
-            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
-        }
-        return ret;
-    }
-
-    size_t total = 0, used = 0;
-    ret = esp_spiffs_info(NULL, &total, &used);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
-    return ESP_OK;
-}
-
 void app_main(void)
 {
     // esp_log_level_set("*", ESP_LOG_NONE);
@@ -703,29 +675,26 @@ void app_main(void)
     // Wait a second for memory initialization
     vTaskDelay(500 / portTICK_PERIOD_MS);
 
-// Initialize SD card
-// #if (CONFIG_USING_SDCARD)
+#if (CONFIG_USING_SDCARD)
     // Initialize SPI Bus
+    ESP_LOGI(__func__, "Initialize SD card with SPI interface.");
+    esp_vfs_fat_mount_config_t mount_config_t = MOUNT_CONFIG_DEFAULT();
+    spi_bus_config_t spi_bus_config_t = SPI_BUS_CONFIG_DEFAULT();
+    sdmmc_host_t host_t = SDSPI_HOST_DEFAULT();
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.gpio_cs = CONFIG_PIN_NUM_CS;
+    slot_config.host_id = host_t.slot;
 
-    // ESP_LOGI(__func__, "Initialize SD card with SPI interface.");
-    // esp_vfs_fat_mount_config_t mount_config_t = MOUNT_CONFIG_DEFAULT();
-    // spi_bus_config_t spi_bus_config_t = SPI_BUS_CONFIG_DEFAULT();
-    // sdmmc_host_t host_t = SDSPI_HOST_DEFAULT();
-    // sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    // slot_config.gpio_cs = CONFIG_PIN_NUM_CS;
-    // slot_config.host_id = host_t.slot;
+    sdmmc_card_t SDCARD;
+    ESP_ERROR_CHECK_WITHOUT_ABORT(sdcard_initialize(&mount_config_t, &SDCARD, &host_t, &spi_bus_config_t, &slot_config));
+    SDcard_semaphore = xSemaphoreCreateMutex();
 
-    // sdmmc_card_t SDCARD;
-    // ESP_ERROR_CHECK_WITHOUT_ABORT(sdcard_initialize(&mount_config_t, &SDCARD, &host_t, &spi_bus_config_t, &slot_config));
-    // SDcard_semaphore = xSemaphoreCreateMutex();
+    xTaskCreate(fileEvent_task, "EventFile", (1024 * 8), NULL, (UBaseType_t)20, NULL);
 
-    // xTaskCreate(fileEvent_task, "EventFile", (1024 * 8), NULL, (UBaseType_t)20, NULL);
-
-    mount_storage(MOUNT_POINT);
-
-// #endif // CONFIG_USING_SDCARD
+#endif // CONFIG_USING_SDCARD
 
     ESP_ERROR_CHECK_WITHOUT_ABORT(i2cdev_init());
+    ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_initialize(&ds3231_device, CONFIG_RTC_I2C_PORT, CONFIG_RTC_PIN_NUM_SDA, CONFIG_RTC_PIN_NUM_SCL));
 
     // Create dataSensorQueue
     dataSensorSentToSD_queue = xQueueCreate(QUEUE_SIZE, sizeof(struct dataSensor_st));
@@ -740,27 +709,13 @@ void app_main(void)
 
     // Create task to get data from sensor (32Kb stack memory| priority 25(max))
     // Period 5000ms
-    xTaskCreate(getDataFromSensor_task, "GetDataSensor", (1024 * 32), NULL, (UBaseType_t)15, &getDataFromSensorTask_handle);
+    xTaskCreate(getDataFromSensor_task, "GetDataSensor", (1024 * 32), NULL, (UBaseType_t)25, &getDataFromSensorTask_handle);
 
     // Create task to save data from sensor read by getDataFromSensor_task() to SD card (16Kb stack memory| priority 10)
     // Period 5000ms
     xTaskCreate(saveDataSensorToSDcard_task, "SaveDataSensor", (1024 * 16), NULL, (UBaseType_t)15, &saveDataSensorToSDcardTask_handle);
 
 #if CONFIG_USING_WIFI
-#if CONFIG_PM_ENABLE
-    // Configure dynamic frequency scaling:
-    // maximum and minimum frequencies are set in sdkconfig,
-    // automatic light sleep is enabled if tickless idle support is enabled.
-    esp_pm_config_t pm_config = {
-            .max_freq_mhz = CONFIG_MAX_CPU_FREQ_MHZ,
-            .min_freq_mhz = CONFIG_MIN_CPU_FREQ_MHZ,
-#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
-            .light_sleep_enable = true
-#endif
-    };
-    ESP_ERROR_CHECK_WITHOUT_ABORT( esp_pm_configure(&pm_config) );
-#endif // CONFIG_PM_ENABLE
     WIFI_initSTA();
 #endif
-
 }
