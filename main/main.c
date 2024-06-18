@@ -276,21 +276,9 @@ void WIFI_initSTA(void)
     esp_event_handler_instance_t instance_got_ip;
     esp_event_handler_instance_t instance_any_id_SmartConfig;
 
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_instance_register(WIFI_EVENT,
-                                                        ESP_EVENT_ANY_ID,
-                                                        &WiFi_eventHandler,
-                                                        NULL,
-                                                        &instance_any_id_Wifi));
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_instance_register(IP_EVENT,
-                                                        IP_EVENT_STA_GOT_IP,
-                                                        &WiFi_eventHandler,
-                                                        NULL,
-                                                        &instance_got_ip));
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_instance_register(SC_EVENT,
-                                                        ESP_EVENT_ANY_ID,
-                                                        &WiFi_eventHandler,
-                                                        NULL,
-                                                        &instance_any_id_SmartConfig));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &WiFi_eventHandler, NULL, &instance_any_id_Wifi));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &WiFi_eventHandler, NULL, &instance_got_ip));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_instance_register(SC_EVENT, ESP_EVENT_ANY_ID, &WiFi_eventHandler, NULL, &instance_any_id_SmartConfig));
 
     static wifi_config_t wifi_config = {
         .sta = {
@@ -375,7 +363,6 @@ void getDataFromSensor_task(void *parameters)
     // Wait until first measurement is ready (constant time of at least 30 ms
     // or the duration returned from *sht3x_get_measurement_duration*).
     vTaskDelay(sht3x_get_measurement_duration(SHT3X_HIGH));
-
     // End setup for ADS1115
     memset(ads111x_devices, 0, sizeof(ads111x_devices));
     for (size_t i = 0; i < CONFIG_ADS111X_DEVICE_COUNT; i++)
@@ -384,7 +371,6 @@ void getDataFromSensor_task(void *parameters)
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_mode(&ads111x_devices[i], ADS111X_MODE_CONTINUOUS));    // Continuous conversion mode
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_data_rate(&ads111x_devices[i], ADS111X_DATA_RATE_128)); // 128 samples per second
         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_gain(&ads111x_devices[i], ads111x_gain_values[ADS111X_GAIN_2V048]));
-        ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[i], (ads111x_mux_t)(i)));
     }
     // Setup for PCF8575
 
@@ -421,7 +407,7 @@ void getDataFromSensor_task(void *parameters)
         ESP_ERROR_CHECK_WITHOUT_ABORT(pcf8575_pin_write(&pcf8575_device, PCF8575_GPIO_PIN_17, 1));
         vTaskDelay(5000 / portTICK_PERIOD_MS);
         ESP_ERROR_CHECK_WITHOUT_ABORT(ds3231_convertTimeToString(&ds3231_device, nameFileSaveData, 14));
-        ESP_ERROR_CHECK_WITHOUT_ABORT(sdcard_writeDataToFile(nameFileSaveData, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",  "TimeStamp", "Temperature", "Humidity", "EtOH", "VOC1", "VOC2", "CH4", "H2S", "CO", "Odor", "NH3"));
+        ESP_ERROR_CHECK_WITHOUT_ABORT(sdcard_writeDataToFile(nameFileSaveData, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",   "TimeStamp", "Temperature", "Humidity", "EtOH", "VOC1", "VOC2", "CH4", "H2S", "CO", "Odor", "NH3"));
         finishTime = xTaskGetTickCount() + SAMPLING_TIMME;
 
         do
@@ -445,14 +431,13 @@ void getDataFromSensor_task(void *parameters)
                     for (size_t n = 0; n < 2; n++)
                     {
                         ESP_ERROR_CHECK_WITHOUT_ABORT(ads111x_set_input_mux(&ads111x_devices[n], (ads111x_mux_t)(i + 4)));
-                        vTaskDelay(10 / portTICK_PERIOD_MS);
+                        vTaskDelay(50 / portTICK_PERIOD_MS);
                         int16_t ADC_rawData = 0;
                         if (ads111x_get_value(&ads111x_devices[n], &ADC_rawData) == ESP_OK)
                         {
-                            // float voltage = ads111x_gain_values[ADS111X_GAIN_2V048] / ADS111X_MAX_VALUE * ADC_rawData;
-                            // ESP_LOGI(__func__, "Raw ADC value: %d, Voltage: %.04f Volts.", ADC_rawData, voltage);
+                            float voltage = ads111x_gain_values[ADS111X_GAIN_2V048] / ADS111X_MAX_VALUE * ADC_rawData;
+                            ESP_LOGI(__func__, "Raw ADC value: %d, Voltage: %.04f Volts.", ADC_rawData, voltage);
                             dataSensorTemp.ADC_Value[n * 4 + i] = ADC_rawData;
-                            ESP_LOGI(__func__, "Raw ADC value: %d.", ADC_rawData,);
                         }
                         else
                         {
